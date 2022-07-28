@@ -1,14 +1,3 @@
-#from Utilities.bayesian import BayesianClassifier
-import scipy.stats
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-from scipy.stats import norm
-from sklearn.mixture import GaussianMixture as GMM
-
 import scipy.stats
 import pandas as pd
 import numpy as np
@@ -21,7 +10,7 @@ from sklearn.mixture import GaussianMixture as GMM
 
 class GM1D():
 
-    def __init__(self, data: np.array, autotune=True, k=2, maximum_modes=5, max_iter = 1000, verbose=False):
+    def __init__(self, data: np.array, autotune=True, k=2, maximum_modes=2, max_iter = 1000, verbose=False):
         self.data = data.reshape(-1,1)
         self.maximum_modes = maximum_modes
         self.max_iter = max_iter
@@ -80,7 +69,7 @@ class GM1D():
 
 
 class BayesianClassifier():
-    def __init__(self, data: np.ndarray, labels: list, normalize = False):
+    def __init__(self, data: np.ndarray, labels: list, normalize = False, verbose=False):
         if normalize:
             scaler = StandardScaler()
             self.data = scaler.fit_transform(data)
@@ -94,8 +83,8 @@ class BayesianClassifier():
         self.means = np.zeros((self.n_classes, self.n_features))
         self.std_ = np.zeros((self.n_classes, self.n_features))
         #self.likelihood = {class_: [] for class_ in self.unique_labels}
-        self.mixture_model = [GM1D(data=self.data[:,i]) for i in range(self.n_features)]
-        #self.train()
+        self.mixture_model = [GM1D(data=self.data[:,i], verbose=verbose) for i in range(self.n_features)]
+        self.train()
 
     def train(self):
         for i in range(self.n_classes):
@@ -119,7 +108,7 @@ class BayesianClassifier():
             prob_dataframe = pd.concat([prob_dataframe, pd.DataFrame(data=probabilities.reshape(1,-1))], ignore_index=True)
             predictions.append(prediction)
         prob_dataframe = prob_dataframe.rename(columns=self.unique_labels)
-        if y_true:
+        if y_true is not None:
             score = accuracy_score(y_true=y_true,y_pred=predictions)
             print("The score of the classifier is: {}".format(score))
         return (predictions, prob_dataframe)
@@ -132,7 +121,7 @@ class BayesianClassifier():
             for j in range(self.n_features):
                 #calcluate the likehood for this class and this feature
                 if use_mixture_model:
-                    calculations = self.mixture_model[j].pdf(data[i])
+                    calculations = self.mixture_model[j].pdf(data[j])
                 else:
                     calculations = np.log(
                         scipy.stats.norm(self.means[i][j], self.std_[i][j]).pdf(data[j])
@@ -146,4 +135,3 @@ class BayesianClassifier():
                 probabilities[i] += calculations
         index = np.argmax(probabilities)
         return (self.unique_labels[index], probabilities)
-

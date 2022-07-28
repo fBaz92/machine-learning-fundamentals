@@ -1,20 +1,15 @@
 import cv2
 import numpy as np
-import os
 import matplotlib.pyplot as plt
-import random
-import pylab as pl
-from sklearn.metrics import confusion_matrix,accuracy_score
-from pathlib import Path
 from tqdm import tqdm
 from scipy.cluster.vq import kmeans,vq
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import classification_report
 
-class BagOfWords():
+class BagOfImageWords():
 
-    def __init__(self, A_, y_train, target_w=150, channels=4, k = 50, c_params = [1, 10, 100], gamma_params = [0.01, 0.1, 1, 10]):
+    def __init__(self, A_, y_train, target_w=150, channels=4, k = 1000, c_params = [1, 10, 100], gamma_params = [0.01, 0.1, 1, 10]):
         self.A_ = A_
         self.y_train = y_train
         self.target_w = target_w
@@ -23,8 +18,11 @@ class BagOfWords():
         self.k = k
         self.sift = cv2.SIFT_create()
         self.des_list, self.kp_list, self.descriptors_float = self.get_descriptors(A_=self.A_)
-        self.voc, self.variance = kmeans(self.des_list, self.k, 20)
-        self.features = self.vector_quantization()
+        print("creating centroids")
+        self.voc, self.variance = kmeans(self.descriptors_float, self.k, 20)
+        self.features = self.vector_quantization(self.des_list, self.n_images_paths, self.k, self.voc)
+        self.scaler = StandardScaler()
+        self.features = self.scaler.fit_transform(self.features)
         self.c_params = c_params
         self.gamma_params = gamma_params
         self.model = self.train_model()
@@ -43,9 +41,16 @@ class BagOfWords():
             des_list.append(descriptor)
             kp_list.append(keypoints)
 
-        descriptors = des_list[0]
-        for descriptor in des_list[1:]:
-            descriptors = np.concatenate((descriptors, descriptor))
+        first_ = True
+        for descriptor in des_list:
+            if descriptor is not None:
+                if first_:
+                    descriptors = descriptor
+                    first_ = False
+                else:
+                    descriptors = np.concatenate((descriptors, descriptor))
+            else:
+                continue
         descriptors_float = descriptors.astype(float)
         return des_list, kp_list, descriptors_float
 
@@ -56,13 +61,13 @@ class BagOfWords():
             x, y = kp.pt
             plt.imshow(cv2.circle(im, (int(x), int(y)), 2, color))
 
-    def vector_quantization(self):
-        features = np.zeros((self.n_images_paths, self.k), "float32")
-        for i in tqdm(range(self.n_images_paths)):
+    def vector_quantization(self, des_list, n_images_paths, k, voc):
+        features = np.zeros((n_images_paths, k), "float32")
+        for i in tqdm(range(n_images_paths)):
             try:
                 # Use the codebook to assign each observation to a cluster via vector quantization
                 # labels, distance = vq(dataset, codebook)
-                image_words, distance = vq(self.des_list[i], self.voc)
+                image_words, distance = vq(des_list[i], voc)
                 for w in image_words:
                     features[i][w] += 1
             except:
@@ -72,6 +77,7 @@ class BagOfWords():
 
     def train_model(self):
 
+        print("sto allenando il modello")
         from sklearn.svm import SVC
         features = self.features - np.mean(self.features, axis=0)
         clf = SVC(kernel='rbf', class_weight='balanced')
@@ -80,12 +86,24 @@ class BagOfWords():
         grid.fit(features, self.y_train)
         return grid.best_estimator_
 
+    def draw_keypoints(self, index = 0, color = (255, 255, 255)):
+        im = self.A_[index,:].reshape([-1, self.target_w, self.channels])
+        keypoints = self.kp_list[index]
+        im = cv2.normalize(im, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+        for kp in tqdm(keypoints):
+            x, y = kp.pt
+            plt.imshow(cv2.circle(im, (int(x), int(y)), 2, color))
 
     def predict(self, A_test, y_test):
-        des_list, _, _ = self.get_descriptors()
+        des_list, _, _ = self.get_descriptors(A_=A_test)
         n_images_path, _ = A_test.shape
-        im_test_features = self.vector_quantization(n_images_paths=n_images_path, descriptors_list=des_list, k=self.k)
-
+        im_test_features = self.vector_quantization(des_list=des_list, n_images_paths=n_images_path, k=self.k, voc=self.voc)
         yfit = self.model.predict(im_test_features)
         print(classification_report(y_test, yfit))
         return yfit
+
+    def transform_features(self, A_test):
+        des_list, _, _ = self.get_descriptors(A_=A_test)
+        n_images_path, _ = A_test.shape
+        im_test_features = self.vector_quantization(des_list=des_list, n_images_paths=n_images_path, k=self.k, voc=self.voc)
+        return im_test_features
